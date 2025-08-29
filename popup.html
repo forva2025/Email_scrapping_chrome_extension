@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email Scraper</title>
+    <style>
+        /* Clean, modern CSS with good contrast and readability */
+        :root {
+            --primary-color: #007bff;
+            --secondary-color: #6c757d;
+            --success-color: #28a745;
+            --warning-color: #ffc107;
+            --danger-color: #dc3545;
+            --background-color: #ffffff;
+            --text-color: #212529;
+            --border-color: #dee2e6;
+            --shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: var(--background-color);
+            color: var(--text-color);
+            width: 350px;
+            min-height: 400px;
+            padding: 16px;
+            line-height: 1.5;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--primary-color);
+            margin-bottom: 4px;
+        }
+
+        .header p {
+            font-size: 12px;
+            color: var(--secondary-color);
+        }
+
+        .control-group {
+            margin-bottom: 16px;
+        }
+
+        .control-group label {
+            display: block;
+            font-weight: 500;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 10px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            text-align: center;
+            text-decoration: none;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            width: 100%;
+            margin-bottom: 8px;
+        }
+
+        .btn-primary {
+            background-color: var(--primary-color);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background-color: #0056b3;
+            transform: translateY(-1px);
+            box-shadow: var(--shadow);
+        }
+
+        .btn-primary:active {
+            transform: translateY(0);
+        }
+
+        .btn-secondary {
+            background-color: var(--secondary-color);
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background-color: #545b62;
+        }
+
+        .btn-success {
+            background-color: var(--success-color);
+            color: white;
+        }
+
+        .btn-success:hover {
+            background-color: #1e7e34;
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .email-list {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 12px;
+            background-color: #f8f9fa;
+            margin-top: 12px;
+        }
+
+        .email-item {
+            padding: 6px 0;
+            border-bottom: 1px solid #e9ecef;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            word-break: break-all;
+        }
+
+        .email-item:last-child {
+            border-bottom: none;
+        }
+
+        .stats {
+            margin: 12px 0;
+            padding: 8px 12px;
+            background-color: #e9ecef;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .stats-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 4px;
+        }
+
+        .page-info {
+            text-align: center;
+            color: #6c757d;
+            font-size: 11px;
+        }
+
+        .status-indicator {
+            font-size: 11px;
+            padding: 2px 6px;
+            border-radius: 10px;
+            background-color: #fff3cd;
+            color: #856404;
+        }
+
+        .status-indicator.found {
+            background-color: #d4edda;
+            color: #155724;
+        }
+
+        .status-indicator.scanning {
+            background-color: #cce7ff;
+            color: #004085;
+        }
+
+        .status {
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            text-align: center;
+            margin: 8px 0;
+        }
+
+        .status.success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .status.warning {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+
+        .status.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid var(--primary-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 8px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            margin: 8px 0;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            margin-right: 8px;
+        }
+
+        .checkbox-group label {
+            font-size: 12px;
+            margin-bottom: 0;
+        }
+
+        /* Responsive design */
+        @media (max-width: 400px) {
+            body {
+                width: 320px;
+                padding: 12px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <h1>Email Scraper</h1>
+        <p>Extract emails from web pages</p>
+    </header>
+
+    <main>
+        <div class="control-group">
+            <button id="extractBtn" class="btn btn-primary" aria-label="Extract emails from current page">
+                <span id="extractText">Extract Emails</span>
+            </button>
+
+            <button id="refreshBtn" class="btn btn-secondary" aria-label="Refresh email detection">
+                🔄 Refresh
+            </button>
+
+            <button id="clearBtn" class="btn btn-secondary" aria-label="Clear all extracted emails">
+                Clear List
+            </button>
+        </div>
+
+        <div class="control-group">
+            <label for="exportFormat">Export Format:</label>
+            <select id="exportFormat" class="btn btn-secondary" style="width: 100%; padding: 8px;" aria-label="Choose export format">
+                <option value="csv">CSV Format</option>
+                <option value="json">JSON Format</option>
+                <option value="txt">Text Format</option>
+            </select>
+        </div>
+
+        <div class="control-group">
+            <button id="exportBtn" class="btn btn-success" disabled aria-label="Export emails to file">
+                Export Emails
+            </button>
+        </div>
+
+        <div class="checkbox-group">
+            <input type="checkbox" id="removeDuplicates" checked aria-label="Remove duplicate emails">
+            <label for="removeDuplicates">Remove duplicates</label>
+        </div>
+
+        <div id="statusMessage" class="status hidden" role="status" aria-live="polite"></div>
+
+        <div class="stats" id="statsContainer">
+            <div class="stats-row">
+                <span id="emailCount">Emails found: 0</span>
+                <span id="autoDetectStatus" class="status-indicator">🔍 Scanning...</span>
+            </div>
+            <div class="page-info">
+                <span id="pageInfo">Current page</span>
+            </div>
+        </div>
+
+        <div id="emailList" class="email-list hidden" role="list" aria-label="Extracted email addresses">
+            <!-- Email items will be dynamically added here -->
+        </div>
+    </main>
+
+    <script src="popup.js"></script>
+</body>
+</html>

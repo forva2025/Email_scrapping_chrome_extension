@@ -182,6 +182,10 @@ If you encounter issues:
 3. Create a new issue with detailed information
 4. Include your browser version and steps to reproduce
 
+## Security
+
+For information about security measures, best practices, and how to report security issues, please see our [Security Policy](SECURITY.md).
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
