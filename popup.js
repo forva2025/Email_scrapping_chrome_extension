@@ -342,69 +342,53 @@ const chromeComm = {
 };
 
 /**
- * Load current page emails and update UI
+ * Load current page emails and update UI - Optimized for speed
  */
 const loadCurrentPageEmails = () => {
-    // Get current tab information first
+    // Get current tab information
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         const currentTab = tabs[0];
         if (!currentTab) {
             console.error('Email Scraper: No active tab found');
+            elements.pageInfo.textContent = 'No active tab';
             return;
         }
 
-        console.log('Email Scraper: Loading emails for tab:', currentTab.url);
+        // Update page info immediately
+        elements.pageInfo.textContent = currentTab.title || 'Current page';
 
-        chrome.storage.local.get(['currentPageEmails'], (result) => {
+        // Check for stored emails (fast check)
+        chrome.storage.local.get(['pageData'], (result) => {
             if (chrome.runtime.lastError) {
                 console.error('Email Scraper: Storage error:', chrome.runtime.lastError);
+                elements.autoDetectStatus.textContent = '❌ Storage error';
                 return;
             }
 
-            const pageData = result.currentPageEmails;
-            console.log('Email Scraper: Retrieved page data:', pageData);
+            const pageData = result.pageData;
 
-            if (pageData && pageData.url === currentTab.url) {
-                // Show current page email count
-                elements.emailCount.textContent = `Emails found: ${pageData.count}`;
-                elements.pageInfo.textContent = pageData.title || currentTab.title || 'Current page';
+            if (pageData && pageData.url === currentTab.url && pageData.emails && pageData.emails.length > 0) {
+                // Show stored emails immediately
+                const emailCount = pageData.emails.length;
+                elements.emailCount.textContent = `Emails found: ${emailCount}`;
+                elements.autoDetectStatus.textContent = `✅ ${emailCount} emails found`;
+                elements.autoDetectStatus.className = 'status-indicator found';
 
-                // Update status indicator
-                if (pageData.count > 0) {
-                    elements.autoDetectStatus.textContent = `✅ ${pageData.count} emails found`;
-                    elements.autoDetectStatus.className = 'status-indicator found';
+                // Display emails
+                emailManager.displayEmails(pageData.emails);
+                elements.exportBtn.disabled = false;
+                extractedEmails = pageData.emails;
 
-                    // Display emails from current page
-                    emailManager.displayEmails(pageData.emails);
-                    elements.exportBtn.disabled = false;
-
-                    // Update extracted emails array
-                    extractedEmails = pageData.emails;
-
-                    console.log(`Email Scraper: Displayed ${pageData.count} emails for ${currentTab.url}`);
-                } else {
-                    elements.autoDetectStatus.textContent = '❌ No emails found';
-                    elements.autoDetectStatus.className = 'status-indicator';
-                    elements.emailList.classList.add('hidden');
-                    elements.exportBtn.disabled = true;
-
-                    console.log(`Email Scraper: No emails found for ${currentTab.url}`);
-                }
+                console.log(`Email Scraper: Loaded ${emailCount} stored emails for ${currentTab.url}`);
             } else {
-                // No emails detected on current page yet
+                // No stored emails - show ready state
                 elements.emailCount.textContent = 'Emails found: 0';
-                elements.pageInfo.textContent = currentTab.title || 'Current page';
-                elements.autoDetectStatus.textContent = '🔍 Scanning...';
-                elements.autoDetectStatus.className = 'status-indicator scanning';
+                elements.autoDetectStatus.textContent = '🔍 Ready to scan';
+                elements.autoDetectStatus.className = 'status-indicator';
                 elements.emailList.classList.add('hidden');
                 elements.exportBtn.disabled = true;
 
-                console.log(`Email Scraper: No stored emails for ${currentTab.url}, waiting for detection...`);
-
-                // Set a timeout to check again in case detection is still running
-                setTimeout(() => {
-                    loadCurrentPageEmails();
-                }, 2000);
+                console.log(`Email Scraper: No stored emails for ${currentTab.url} - ready for manual scan`);
             }
         });
     });
@@ -501,28 +485,21 @@ const setupEventListeners = () => {
 };
 
 /**
- * Initialization
+ * Fast Initialization - Optimized for speed
  */
 const initialize = () => {
+    // Setup event listeners immediately
     setupEventListeners();
 
-    // Load current page emails first
+    // Load current page emails immediately (no delays)
     loadCurrentPageEmails();
 
-    // Also load any previously stored emails for reference
-    chrome.storage.local.get(['extractedEmails'], (result) => {
-        if (result.extractedEmails && extractedEmails.length === 0) {
-            // Only use stored emails if no current page emails
-            extractedEmails = result.extractedEmails;
-            emailManager.displayEmails(extractedEmails);
-            utils.updateEmailCount();
-            elements.exportBtn.disabled = extractedEmails.length === 0;
-        }
-    });
+    // Update UI elements immediately
+    utils.updateEmailCount();
 };
 
-// Initialize when DOM is ready
-document.addEventListener('DOMContentLoaded', initialize);
+// Initialize immediately when script loads
+initialize();
 
 // Save emails when popup closes
 window.addEventListener('beforeunload', () => {

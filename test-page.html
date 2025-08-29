@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email Scraper Test Page</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .email {
+            background-color: #e8f4fd;
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-weight: bold;
+        }
+        .contact-info {
+            background-color: #f0f8ff;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Email Scraper Test Page</h1>
+
+    <p>This page contains various email addresses for testing the Email Scraper Chrome Extension.</p>
+
+    <div class="contact-info">
+        <h2>Contact Information</h2>
+        <p>For support, please email <span class="email">support@example.com</span></p>
+        <p>Sales inquiries: <a href="mailto:sales@company.org">sales@company.org</a></p>
+        <p>Technical questions: <span class="email">tech@domain.co.uk</span></p>
+    </div>
+
+    <h2>Team Members</h2>
+    <ul>
+        <li>John Doe: <span class="email">john.doe@company.org</span></li>
+        <li>Jane Smith: <span class="email">jane.smith@another.com</span></li>
+        <li>Bob Johnson: <span class="email">bob@subdomain.example.com</span></li>
+    </ul>
+
+    <h2>Newsletter Signup</h2>
+    <p>Subscribe to our newsletter at <span class="email">newsletter@updates.com</span></p>
+
+    <h2>Footer</h2>
+    <p>Contact us: <a href="mailto:info@website.com">info@website.com</a></p>
+    <p>Privacy Policy | Terms of Service</p>
+
+    <div style="margin-top: 30px; padding: 15px; background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 5px;">
+        <h3>Testing Instructions</h3>
+        <ol>
+            <li>Load this page in your browser</li>
+            <li>Click the Email Scraper extension icon</li>
+            <li>Click "Extract Emails" button</li>
+            <li>Verify that emails are detected and displayed</li>
+            <li>Test the export functionality</li>
+        </ol>
+    </div>
+
+    <script>
+        // Add some dynamic content after page load
+        setTimeout(() => {
+            const dynamicDiv = document.createElement('div');
+            dynamicDiv.innerHTML = `
+                <h2>Dynamic Content</h2>
+                <p>This content was added dynamically: <span class="email">dynamic@content.org</span></p>
+            `;
+            document.body.appendChild(dynamicDiv);
+        }, 2000);
+    </script>
+</body>
+</html>

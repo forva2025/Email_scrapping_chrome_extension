@@ -24,111 +24,83 @@ chrome.runtime.onInstalled.addListener((details) => {
     }
 });
 
-// Handle keyboard shortcuts
+// Handle keyboard shortcuts with error handling
 chrome.commands.onCommand.addListener((command) => {
-    if (command === 'extract-emails') {
-        // Get the active tab and send message to content script
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-            if (tabs[0]) {
-                chrome.tabs.sendMessage(tabs[0].id, { action: 'extractEmails' });
-            }
-        });
+    try {
+        if (command === 'extract-emails') {
+            console.log('Background: Keyboard shortcut triggered for email extraction');
+
+            // Get the active tab and send message to content script
+            chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                try {
+                    if (tabs[0]) {
+                        console.log('Background: Sending extract emails message to tab:', tabs[0].id);
+                        chrome.tabs.sendMessage(tabs[0].id, { type: 'extractEmails' }, (response) => {
+                            if (chrome.runtime.lastError) {
+                                console.error('Background: Failed to send keyboard shortcut message:', chrome.runtime.lastError);
+                            } else {
+                                console.log('Background: Keyboard shortcut message sent successfully');
+                            }
+                        });
+                    } else {
+                        console.warn('Background: No active tab found for keyboard shortcut');
+                    }
+                } catch (tabError) {
+                    console.error('Background: Error in tab query callback:', tabError);
+                }
+            });
+        }
+    } catch (commandError) {
+        console.error('Background: Error in command listener:', commandError);
     }
 });
 
-// Handle messages from content scripts
+// Optimized message handler - Fast and simple
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    // Only accept messages from our own extension
-    if (sender.id !== chrome.runtime.id) {
-        console.warn('Unauthorized message received');
-        return;
+    try {
+        // Fast validation
+        if (!message || !message.type) {
+            sendResponse({ success: false, error: 'Invalid message' });
+            return true;
+        }
+
+        switch (message.type) {
+            case 'storePageEmails':
+                // Fast storage of page emails
+                if (message.pageData && Array.isArray(message.pageData.emails)) {
+                    const pageData = {
+                        ...message.pageData,
+                        storedAt: Date.now()
+                    };
+
+                    chrome.storage.local.set({
+                        pageData: pageData
+                    }, () => {
+                        if (chrome.runtime.lastError) {
+                            console.error('Background: Storage failed:', chrome.runtime.lastError);
+                            sendResponse({ success: false, error: chrome.runtime.lastError.message });
+                        } else {
+                            // Update badge
+                            updateBadge(pageData.emails.length, sender.tab?.id);
+                            sendResponse({ success: true, count: pageData.emails.length });
+                        }
+                    });
+                } else {
+                    sendResponse({ success: false, error: 'Invalid page data' });
+                }
+                break;
+
+            default:
+                sendResponse({ success: false, error: 'Unknown message type' });
+        }
+
+        return true; // Async response
+
+    } catch (error) {
+        console.error('Background: Message error:', error.message);
+        sendResponse({ success: false, error: error.message });
+        return true;
     }
-
-    // Handle different message types with validation
-    switch (message.type) {
-        case 'storePageEmails':
-            // Store page emails and update badge
-            if (message.pageData && Array.isArray(message.pageData.emails)) {
-                const pageData = message.pageData;
-
-                // Validate email format before storing
-                const validEmails = pageData.emails.filter(email =>
-                    typeof email === 'string' &&
-                    email.length > 0 &&
-                    email.length <= 254 &&
-                    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
-                );
-
-                // Update page data with validated emails
-                const validatedPageData = {
-                    ...pageData,
-                    emails: validEmails,
-                    count: validEmails.length
-                };
-
-                // Store page emails
-                chrome.storage.local.set({
-                    currentPageEmails: validatedPageData
-                }, () => {
-                    if (chrome.runtime.lastError) {
-                        console.error('Failed to store page emails:', chrome.runtime.lastError);
-                        sendResponse({ success: false, error: chrome.runtime.lastError.message });
-                    } else {
-                        console.log(`Stored ${validEmails.length} emails for page: ${pageData.url}`);
-                        // Update badge for the tab
-                        updateBadge(validEmails.length, sender.tab?.id);
-                        sendResponse({ success: true, count: validEmails.length });
-                    }
-                });
-            } else {
-                sendResponse({ success: false, error: 'Invalid page data' });
-            }
-            break;
-
-        case 'pageEmailsDetected':
-            // Update extension badge with email count
-            updateBadge(message.count, sender.tab?.id);
-            sendResponse({ success: true });
-            break;
-
-        case 'emailsExtracted':
-            if (Array.isArray(message.emails)) {
-                // Validate email format before storing
-                const validEmails = message.emails.filter(email =>
-                    typeof email === 'string' &&
-                    email.length > 0 &&
-                    email.length <= 254 &&
-                    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
-                );
-
-                // Store validated emails
-                chrome.storage.local.get(['extractedEmails'], (result) => {
-                    const existingEmails = result.extractedEmails || [];
-                    const allEmails = [...existingEmails, ...validEmails];
-
-                    // Remove duplicates and limit size
-                    const uniqueEmails = [...new Set(allEmails.map(e => e.toLowerCase()))].slice(0, 1000);
-
-                    chrome.storage.local.set({ extractedEmails: uniqueEmails });
-                });
-
-                sendResponse({ success: true, count: validEmails.length });
-            }
-            break;
-
-        case 'getSettings':
-            chrome.storage.local.get(['settings'], (result) => {
-                sendResponse(result.settings || {});
-            });
-            break;
-
-        default:
-            console.warn('Unknown message type:', message.type);
-            sendResponse({ error: 'Unknown message type' });
-    }
-
-    // Return true to indicate async response
-    return true;
 });
 
 /**
@@ -164,14 +136,23 @@ function updateBadge(count, tabId) {
     }
 }
 
-// Clear badge when tab is closed or URL changes
+// Clear badge when tab is closed or URL changes with error handling
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    if (changeInfo.status === 'loading') {
-        // Clear badge when page starts loading
-        chrome.action.setBadgeText({
-            text: '',
-            tabId: tabId
-        });
+    try {
+        if (changeInfo.status === 'loading') {
+            console.log('Background: Clearing badge for loading tab:', tabId);
+            // Clear badge when page starts loading
+            chrome.action.setBadgeText({
+                text: '',
+                tabId: tabId
+            }, () => {
+                if (chrome.runtime.lastError) {
+                    console.error('Background: Failed to clear badge:', chrome.runtime.lastError);
+                }
+            });
+        }
+    } catch (tabUpdateError) {
+        console.error('Background: Error in tab update listener:', tabUpdateError);
     }
 });
 
@@ -181,14 +162,7 @@ chrome.runtime.onSuspend.addListener(() => {
     console.log('Email Scraper Extension suspending');
 });
 
-// Periodic cleanup of old data (optional)
-setInterval(() => {
-    chrome.storage.local.get(['extractedEmails'], (result) => {
-        const emails = result.extractedEmails || [];
-        if (emails.length > 1000) {
-            // Keep only the most recent 500 emails
-            const trimmedEmails = emails.slice(-500);
-            chrome.storage.local.set({ extractedEmails: trimmedEmails });
-        }
-    });
-}, 3600000); // Run every hour
+// Simple cleanup on extension suspend
+chrome.runtime.onSuspend.addListener(() => {
+    console.log('Background: Extension suspending');
+});
