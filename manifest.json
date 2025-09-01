@@ -21,11 +21,15 @@
   },
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*"],
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
       "js": ["content.js"],
-      "run_at": "document_idle",
+      "run_at": "document_end",
       "match_about_blank": false,
-      "all_frames": false
+      "all_frames": false,
+      "world": "MAIN"
     }
   ],
   "commands": {
@@ -42,5 +46,11 @@
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["content.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }

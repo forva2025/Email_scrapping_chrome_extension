@@ -172,7 +172,7 @@ const emailManager = {
 
     /**
      * Exports emails in specified format
-     * @param {string} format - Export format (csv, json, txt)
+     * @param {string} format - Export format (csv, json, txt, pdf)
      */
     exportEmails: async (format) => {
         if (extractedEmails.length === 0) {
@@ -196,6 +196,9 @@ const emailManager = {
                     filename = 'emails.json';
                     mimeType = 'application/json';
                     break;
+                case 'pdf':
+                    await exportAsPDF();
+                    return;
                 case 'txt':
                 default:
                     content = extractedEmails.join('\n');
@@ -204,255 +207,360 @@ const emailManager = {
                     break;
             }
 
-            // Create and trigger download
+            // Create and download file
             const blob = new Blob([content], { type: mimeType });
             const url = URL.createObjectURL(blob);
 
-            await chrome.downloads.download({
+            chrome.downloads.download({
                 url: url,
                 filename: filename,
                 saveAs: true
+            }, () => {
+                URL.revokeObjectURL(url);
+                utils.showStatus(`Exported ${extractedEmails.length} emails as ${format.toUpperCase()}`, 'success');
             });
 
-            URL.revokeObjectURL(url);
-            utils.showStatus(`Exported ${extractedEmails.length} emails as ${format.toUpperCase()}`, 'success');
-
         } catch (error) {
-            console.error('Export failed:', error);
-            utils.showStatus('Export failed. Please try again.', 'error');
+            console.error('Export error:', error);
+            utils.showStatus('Export failed: ' + error.message, 'error');
         }
     }
 };
 
 /**
- * Chrome Extension Communication
+ * PDF Export Function
  */
-const chromeComm = {
+async function exportAsPDF() {
+    try {
+        // Create a simple HTML structure for PDF
+        const htmlContent = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Extracted Emails</title>
+                <style>
+                    body { font-family: Arial, sans-serif; margin: 20px; }
+                    h1 { color: #007bff; }
+                    .email { padding: 5px; margin: 2px 0; background: #f8f9fa; border-left: 3px solid #007bff; }
+                    .header { text-align: center; margin-bottom: 30px; }
+                    .stats { margin: 20px 0; padding: 15px; background: #e9ecef; border-radius: 5px; }
+                </style>
+            </head>
+            <body>
+                <div class="header">
+                    <h1>Extracted Email Addresses</h1>
+                    <p>Generated on: ${new Date().toLocaleString()}</p>
+                </div>
+                <div class="stats">
+                    <strong>Total Emails Found:</strong> ${extractedEmails.length}
+                </div>
+                <h2>Email List:</h2>
+                ${extractedEmails.map(email => `<div class="email">${email}</div>`).join('')}
+            </body>
+            </html>
+        `;
+
+        // Convert HTML to PDF using jsPDF (if available) or fallback to print
+        try {
+            // Try to use jsPDF if available
+            if (typeof window.jsPDF !== 'undefined') {
+                const { jsPDF } = window.jsPDF;
+                const doc = new jsPDF();
+                
+                doc.setFontSize(16);
+                doc.text('Extracted Email Addresses', 20, 20);
+                doc.setFontSize(12);
+                doc.text(`Generated on: ${new Date().toLocaleString()}`, 20, 30);
+                doc.text(`Total Emails: ${extractedEmails.length}`, 20, 40);
+                
+                let yPos = 60;
+                extractedEmails.forEach((email, index) => {
+                    if (yPos > 280) {
+                        doc.addPage();
+                        yPos = 20;
+                    }
+                    doc.text(`${index + 1}. ${email}`, 20, yPos);
+                    yPos += 10;
+                });
+                
+                doc.save('emails.pdf');
+                utils.showStatus('PDF exported successfully', 'success');
+            } else {
+                // Fallback: Open in new window for printing
+                const newWindow = window.open('', '_blank');
+                newWindow.document.write(htmlContent);
+                newWindow.document.close();
+                newWindow.print();
+                utils.showStatus('PDF export opened for printing', 'success');
+            }
+        } catch (pdfError) {
+            // Final fallback: download as HTML
+            const blob = new Blob([htmlContent], { type: 'text/html' });
+            const url = URL.createObjectURL(blob);
+            
+            chrome.downloads.download({
+                url: url,
+                filename: 'emails.html',
+                saveAs: true
+            }, () => {
+                URL.revokeObjectURL(url);
+                utils.showStatus('Exported as HTML (can be converted to PDF)', 'success');
+            });
+        }
+
+    } catch (error) {
+        console.error('PDF export error:', error);
+        utils.showStatus('PDF export failed: ' + error.message, 'error');
+    }
+}
+
+/**
+ * Check if content script is loaded on the current tab
+ */
+async function isContentScriptLoaded(tabId) {
+    try {
+        // Try to ping the content script
+        const response = await chrome.tabs.sendMessage(tabId, { type: 'ping' });
+        return response && response.success;
+    } catch (error) {
+        console.log('Content script not loaded:', error.message);
+        return false;
+    }
+}
+
+/**
+ * Force inject content script into the current tab
+ */
+async function forceInjectContentScript(tabId) {
+    try {
+        console.log('Force injecting content script into tab:', tabId);
+        
+        // First, try to inject using chrome.scripting API
+        await chrome.scripting.executeScript({
+            target: { tabId: tabId },
+            files: ['content.js']
+        });
+        
+        console.log('Content script force injection successful');
+        
+        // Wait for the script to initialize
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        
+        // Verify the script is now loaded
+        const isLoaded = await isContentScriptLoaded(tabId);
+        if (isLoaded) {
+            console.log('Content script verification successful');
+            return true;
+        } else {
+            throw new Error('Content script injection succeeded but verification failed');
+        }
+        
+    } catch (error) {
+        console.error('Force injection failed:', error);
+        throw new Error(`Force injection failed: ${error.message}`);
+    }
+}
+
+/**
+ * Core Email Extraction Functions
+ */
+const emailExtractor = {
     /**
-     * Extracts emails from current active tab
+     * Extracts emails from the current active tab
      */
-    extractEmails: async () => {
-        if (isExtracting) return;
+    extractEmailsFromCurrentPage: async () => {
+        if (isExtracting) {
+            utils.showStatus('Extraction already in progress', 'warning');
+            return;
+        }
 
         isExtracting = true;
         elements.extractBtn.disabled = true;
-        elements.extractText.innerHTML = '<span class="loading"></span>Extracting...';
+        elements.extractText.textContent = 'Extracting...';
 
         try {
-            // Check if chrome.scripting is available
-            if (!chrome.scripting || !chrome.scripting.executeScript) {
-                console.error('Email Scraper: chrome.scripting API not available');
-                throw new Error('Scripting API not available. Please check extension permissions.');
+            // Get the active tab
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            
+            if (!tab) {
+                throw new Error('No active tab found');
             }
 
-            // First, try to get pre-detected emails from storage
-            const result = await chrome.storage.local.get(['currentPageEmails']);
-            const pageData = result.currentPageEmails;
+            // Check if we can access the tab
+            if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
+                throw new Error('Cannot extract emails from this type of page (Chrome internal pages are not supported)');
+            }
 
-            if (pageData && pageData.emails && pageData.emails.length > 0) {
-                // Use pre-detected emails
-                emailManager.addEmails(pageData.emails);
-                utils.showStatus(`Found ${pageData.emails.length} email(s)`, 'success');
-            } else {
-                // Fallback: manually extract emails
-                const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
-                if (!tab) {
-                    throw new Error('No active tab found');
-                }
-
-                console.log('Email Scraper: Executing script on tab:', tab.id, tab.url);
-
-                let emails = [];
-
-                try {
-                    // Try chrome.scripting first
-                    const results = await chrome.scripting.executeScript({
-                        target: { tabId: tab.id },
-                        func: () => {
-                            // Call the extraction function directly
-                            return extractEmailsFromPage();
-                        }
-                    });
-
-                    console.log('Email Scraper: Script execution results:', results);
-                    emails = results[0]?.result || [];
-
-                } catch (scriptingError) {
-                    console.warn('Email Scraper: chrome.scripting failed, trying content script messaging:', scriptingError);
-
-                    // Fallback: Try to communicate with existing content script
-                    try {
-                        const response = await new Promise((resolve, reject) => {
-                            chrome.tabs.sendMessage(tab.id, {
-                                type: 'extractEmails'
-                            }, (response) => {
-                                if (chrome.runtime.lastError) {
-                                    reject(new Error(chrome.runtime.lastError.message));
-                                } else {
-                                    resolve(response);
-                                }
-                            });
-                        });
-
-                        if (response && response.emails) {
-                            emails = response.emails;
-                            console.log('Email Scraper: Content script messaging successful');
-                        }
-
-                    } catch (messagingError) {
-                        console.error('Email Scraper: Content script messaging also failed:', messagingError);
-                        throw new Error('Both scripting methods failed. Content script may not be loaded.');
+            console.log('Checking if content script is loaded on tab:', tab.id);
+            
+            // Check if content script is already loaded
+            let contentScriptLoaded = await isContentScriptLoaded(tab.id);
+            
+            if (!contentScriptLoaded) {
+                console.log('Content script not loaded, attempting to inject...');
+                utils.showStatus('Content script not loaded. Injecting...', 'warning');
+                
+                // Try to force inject the content script
+                await forceInjectContentScript(tab.id);
+                contentScriptLoaded = true;
+            }
+            
+            if (contentScriptLoaded) {
+                // Now try to extract emails
+                let response = await emailExtractor.tryExtractWithRetry(tab.id);
+                
+                if (response && response.success) {
+                    const emails = response.emails || [];
+                    if (emails.length > 0) {
+                        emailManager.addEmails(emails);
+                        utils.showStatus(`Found ${emails.length} email(s)`, 'success');
+                        elements.autoDetectStatus.textContent = `✅ Found ${emails.length}`;
+                        elements.autoDetectStatus.className = 'status-indicator found';
+                    } else {
+                        utils.showStatus('No emails found on this page', 'warning');
+                        elements.autoDetectStatus.textContent = '🔍 No emails found';
+                        elements.autoDetectStatus.className = 'status-indicator';
                     }
-                }
-
-                if (emails.length > 0) {
-                    emailManager.addEmails(emails);
-                    utils.showStatus(`Found ${emails.length} email(s)`, 'success');
                 } else {
-                    utils.showStatus('No emails found on this page', 'warning');
+                    throw new Error(response?.error || 'Failed to extract emails');
                 }
+            } else {
+                throw new Error('Failed to load content script after injection attempts');
             }
 
         } catch (error) {
-            console.error('Extraction failed:', error);
-            console.error('Error details:', {
-                message: error.message,
-                stack: error.stack,
-                name: error.name
-            });
-
+            console.error('Extraction error:', error);
+            
             // Provide more specific error messages
-            let errorMessage = 'Failed to extract emails. ';
-            if (error.message.includes('Scripting API')) {
-                errorMessage += 'Extension permissions may be missing.';
-            } else if (error.message.includes('active tab')) {
-                errorMessage += 'No active tab found.';
+            let userMessage = 'Extraction failed';
+            if (error.message.includes('Could not establish connection')) {
+                userMessage = 'Content script not loaded. Please refresh the page and try again.';
+            } else if (error.message.includes('Cannot extract emails from this type of page')) {
+                userMessage = error.message;
+            } else if (error.message.includes('No active tab found')) {
+                userMessage = 'No active tab found. Please ensure you have a webpage open.';
+            } else if (error.message.includes('Failed to load content script')) {
+                userMessage = 'Content script injection failed. Please reload the extension.';
             } else {
-                errorMessage += 'Please try again.';
+                userMessage = error.message;
             }
-
-            utils.showStatus(errorMessage, 'error');
+            
+            utils.showStatus(userMessage, 'error');
+            elements.autoDetectStatus.textContent = '❌ Error';
+            elements.autoDetectStatus.className = 'status-indicator';
         } finally {
             isExtracting = false;
             elements.extractBtn.disabled = false;
             elements.extractText.textContent = 'Extract Emails';
         }
+    },
+
+    /**
+     * Try to extract emails with retry mechanism
+     */
+    tryExtractWithRetry: async (tabId, maxRetries = 2) => {
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                console.log(`Extraction attempt ${attempt}/${maxRetries}`);
+                
+                // Try to send message to content script
+                const response = await chrome.tabs.sendMessage(tabId, { type: 'extractEmails' });
+                
+                if (response && response.success) {
+                    return response;
+                } else {
+                    throw new Error(response?.error || 'Extraction failed');
+                }
+                
+            } catch (messageError) {
+                console.log(`Attempt ${attempt} failed:`, messageError.message);
+                
+                if (attempt === maxRetries) {
+                    // Last attempt failed, try to inject content script
+                    console.log('All attempts failed, trying content script injection');
+                    return await emailExtractor.injectContentScriptAndExtract(tabId);
+                }
+                
+                // Wait before retry
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+        }
+    },
+
+    /**
+     * Injects content script and extracts emails as fallback
+     */
+    injectContentScriptAndExtract: async (tabId) => {
+        try {
+            console.log('Injecting content script into tab:', tabId);
+            
+            // Inject the content script using chrome.scripting API
+            await chrome.scripting.executeScript({
+                target: { tabId: tabId },
+                files: ['content.js']
+            });
+            
+            console.log('Content script injected successfully');
+            
+            // Wait a moment for the script to initialize
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // Now try to send the message again
+            const response = await chrome.tabs.sendMessage(tabId, { type: 'extractEmails' });
+            
+            if (response && response.success) {
+                return response;
+            } else {
+                throw new Error('Content script injection succeeded but extraction failed');
+            }
+            
+        } catch (injectionError) {
+            console.error('Content script injection failed:', injectionError);
+            throw new Error(`Failed to inject content script: ${injectionError.message}`);
+        }
+    },
+
+    /**
+     * Refreshes email detection on the current page
+     */
+    refreshDetection: async () => {
+        try {
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            
+            if (tab) {
+                try {
+                    await chrome.tabs.sendMessage(tab.id, { type: 'refreshDetection' });
+                    utils.showStatus('Detection refreshed', 'success');
+                } catch (messageError) {
+                    console.log('Refresh failed, content script may not be loaded:', messageError.message);
+                    utils.showStatus('Refresh failed - content script not accessible', 'warning');
+                }
+            }
+        } catch (error) {
+            console.error('Refresh error:', error);
+            utils.showStatus('Refresh failed', 'error');
+        }
     }
 };
 
 /**
- * Load current page emails and update UI - Optimized for speed
+ * Event Handlers
  */
-const loadCurrentPageEmails = () => {
-    // Get current tab information
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        const currentTab = tabs[0];
-        if (!currentTab) {
-            console.error('Email Scraper: No active tab found');
-            elements.pageInfo.textContent = 'No active tab';
-            return;
-        }
-
-        // Update page info immediately
-        elements.pageInfo.textContent = currentTab.title || 'Current page';
-
-        // Check for stored emails (fast check)
-        chrome.storage.local.get(['pageData'], (result) => {
-            if (chrome.runtime.lastError) {
-                console.error('Email Scraper: Storage error:', chrome.runtime.lastError);
-                elements.autoDetectStatus.textContent = '❌ Storage error';
-                return;
-            }
-
-            const pageData = result.pageData;
-
-            if (pageData && pageData.url === currentTab.url && pageData.emails && pageData.emails.length > 0) {
-                // Show stored emails immediately
-                const emailCount = pageData.emails.length;
-                elements.emailCount.textContent = `Emails found: ${emailCount}`;
-                elements.autoDetectStatus.textContent = `✅ ${emailCount} emails found`;
-                elements.autoDetectStatus.className = 'status-indicator found';
-
-                // Display emails
-                emailManager.displayEmails(pageData.emails);
-                elements.exportBtn.disabled = false;
-                extractedEmails = pageData.emails;
-
-                console.log(`Email Scraper: Loaded ${emailCount} stored emails for ${currentTab.url}`);
-            } else {
-                // No stored emails - show ready state
-                elements.emailCount.textContent = 'Emails found: 0';
-                elements.autoDetectStatus.textContent = '🔍 Ready to scan';
-                elements.autoDetectStatus.className = 'status-indicator';
-                elements.emailList.classList.add('hidden');
-                elements.exportBtn.disabled = true;
-
-                console.log(`Email Scraper: No stored emails for ${currentTab.url} - ready for manual scan`);
-            }
-        });
-    });
-};
-
-/**
- * Refresh email detection for current page
- */
-const refreshEmailDetection = () => {
-    console.log('Email Scraper: Manual refresh requested');
-
-    // Get current tab
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        const currentTab = tabs[0];
-        if (!currentTab) {
-            utils.showStatus('No active tab found', 'error');
-            return;
-        }
-
-        // Show scanning status
-        elements.autoDetectStatus.textContent = '🔄 Refreshing...';
-        elements.autoDetectStatus.className = 'status-indicator scanning';
-
-        // Send message to content script to re-scan
-        chrome.tabs.sendMessage(currentTab.id, {
-            type: 'refreshDetection'
-        }, (response) => {
-            if (chrome.runtime.lastError) {
-                console.error('Email Scraper: Refresh failed:', chrome.runtime.lastError);
-                console.error('Error details:', {
-                    message: chrome.runtime.lastError.message,
-                    tabId: currentTab.id,
-                    url: currentTab.url
-                });
-                utils.showStatus(`Refresh failed: ${chrome.runtime.lastError.message}`, 'error');
-                elements.autoDetectStatus.textContent = '❌ Refresh failed';
-                elements.autoDetectStatus.className = 'status-indicator';
-            } else {
-                console.log('Email Scraper: Refresh initiated, response:', response);
-                utils.showStatus('Refreshing email detection...', 'success');
-
-                // Reload current page emails after a short delay
-                setTimeout(() => {
-                    loadCurrentPageEmails();
-                }, 1500);
-            }
-        });
-    });
-};
-
-/**
- * Event Listeners
- */
-const setupEventListeners = () => {
-    // Extract emails button
-    elements.extractBtn.addEventListener('click', chromeComm.extractEmails);
-
-    // Refresh detection button
-    elements.refreshBtn.addEventListener('click', refreshEmailDetection);
-
-    // Clear emails button
+const eventHandlers = {
+    /**
+     * Initialize event listeners
+     */
+    init: () => {
+        // Extract button
+        elements.extractBtn.addEventListener('click', emailExtractor.extractEmailsFromCurrentPage);
+        
+        // Clear button
     elements.clearBtn.addEventListener('click', emailManager.clearEmails);
 
-    // Export emails button
+        // Refresh button
+        elements.refreshBtn.addEventListener('click', emailExtractor.refreshDetection);
+        
+        // Export button
     elements.exportBtn.addEventListener('click', () => {
         const format = elements.exportFormat.value;
         emailManager.exportEmails(format);
@@ -467,41 +575,190 @@ const setupEventListeners = () => {
             utils.updateEmailCount();
         }
     });
-
-    // Keyboard shortcuts
-    document.addEventListener('keydown', (event) => {
-        // Ctrl+Shift+E or Cmd+Shift+E to extract
-        if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key === 'E') {
-            event.preventDefault();
-            chromeComm.extractEmails();
-        }
-
-        // Ctrl+Shift+R or Cmd+Shift+R to refresh
-        if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key === 'R') {
-            event.preventDefault();
-            refreshEmailDetection();
-        }
-    });
+    }
 };
 
 /**
- * Fast Initialization - Optimized for speed
+ * Initialize popup
  */
-const initialize = () => {
-    // Setup event listeners immediately
-    setupEventListeners();
+function initializePopup() {
+    try {
+        // Initialize event handlers
+        eventHandlers.init();
+        
+        // Update page info
+        updatePageInfo();
+        
+        // Load any existing emails from storage
+        loadStoredEmails();
+        
+        // Check content script status
+        checkContentScriptStatus();
+        
+        // Set up message listener for automatic email detection
+        setupMessageListener();
+        
+        console.log('Email Scraper Popup initialized successfully');
+        
+    } catch (error) {
+        console.error('Popup initialization error:', error);
+        utils.showStatus('Initialization failed', 'error');
+    }
+}
 
-    // Load current page emails immediately (no delays)
-    loadCurrentPageEmails();
+/**
+ * Set up message listener for automatic email detection
+ */
+function setupMessageListener() {
+    try {
+        chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+            if (message.type === 'emailsDetected') {
+                console.log('Popup: Received automatic email detection:', message.count, 'emails');
+                
+                // Automatically add the detected emails
+                if (message.emails && Array.isArray(message.emails)) {
+                    emailManager.addEmails(message.emails);
+                    
+                    // Update status
+                    elements.autoDetectStatus.textContent = `✅ Found ${message.count}`;
+                    elements.autoDetectStatus.className = 'status-indicator found';
+                    
+                    // Show success message
+                    utils.showStatus(`Automatically detected ${message.count} email(s)`, 'success');
+                    
+                    // Enable export button
+                    elements.exportBtn.disabled = false;
+                }
+                
+                sendResponse({ success: true });
+                return true;
+            }
+        });
+        
+        console.log('Popup: Message listener for automatic detection set up');
+        
+    } catch (error) {
+        console.error('Popup: Error setting up message listener:', error);
+    }
+}
 
-    // Update UI elements immediately
+/**
+ * Update page information display
+ */
+async function updatePageInfo() {
+    try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab) {
+            const url = new URL(tab.url);
+            elements.pageInfo.textContent = url.hostname;
+        }
+    } catch (error) {
+        console.error('Error updating page info:', error);
+        elements.pageInfo.textContent = 'Current page';
+    }
+}
+
+/**
+ * Load emails from storage
+ */
+async function loadStoredEmails() {
+    try {
+        const result = await chrome.storage.local.get(['extractedEmails']);
+        if (result.extractedEmails && Array.isArray(result.extractedEmails)) {
+            extractedEmails = result.extractedEmails;
+            emailManager.displayEmails(extractedEmails);
     utils.updateEmailCount();
+            elements.exportBtn.disabled = extractedEmails.length === 0;
+        }
+    } catch (error) {
+        console.error('Error loading stored emails:', error);
+    }
+}
+
+/**
+ * Save emails to storage
+ */
+async function saveEmailsToStorage() {
+    try {
+        await chrome.storage.local.set({ extractedEmails: extractedEmails });
+    } catch (error) {
+        console.error('Error saving emails to storage:', error);
+    }
+}
+
+/**
+ * Check if content script is accessible on current tab
+ */
+async function checkContentScriptStatus() {
+    try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        
+        if (!tab || !tab.url) {
+            elements.autoDetectStatus.textContent = '🔍 No page loaded';
+            return;
+        }
+
+        // Check if it's a supported page type
+        if (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
+            elements.autoDetectStatus.textContent = '⚠️ Chrome page (not supported)';
+            elements.autoDetectStatus.className = 'status-indicator warning';
+            return;
+        }
+
+        // Try to ping the content script
+        try {
+            await chrome.tabs.sendMessage(tab.id, { type: 'ping' });
+            
+            // Check if we already have emails for this page
+            const result = await chrome.storage.local.get(['pageData']);
+            if (result.pageData && result.pageData.emails && result.pageData.emails.length > 0) {
+                elements.autoDetectStatus.textContent = `✅ Found ${result.pageData.emails.length}`;
+                elements.autoDetectStatus.className = 'status-indicator found';
+                
+                // Load the emails automatically
+                emailManager.addEmails(result.pageData.emails);
+                elements.exportBtn.disabled = false;
+                
+                utils.showStatus(`Found ${result.pageData.emails.length} previously detected email(s)`, 'success');
+            } else {
+                elements.autoDetectStatus.textContent = '🔍 Scanning for emails...';
+                elements.autoDetectStatus.className = 'status-indicator scanning';
+            }
+            
+        } catch (pingError) {
+            if (pingError.message.includes('Could not establish connection')) {
+                elements.autoDetectStatus.textContent = '⚠️ Content script not loaded';
+                elements.autoDetectStatus.className = 'status-indicator warning';
+                utils.showStatus('Content script not loaded. Click Extract to inject it.', 'warning');
+            } else {
+                elements.autoDetectStatus.textContent = '❌ Error';
+                elements.autoDetectStatus.className = 'status-indicator';
+            }
+        }
+        
+    } catch (error) {
+        console.error('Error checking content script status:', error);
+        elements.autoDetectStatus.textContent = '❌ Status check failed';
+        elements.autoDetectStatus.className = 'status-indicator';
+    }
+}
+
+// Initialize when DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializePopup);
+} else {
+    initializePopup();
+}
+
+// Save emails to storage when they change
+const originalAddEmails = emailManager.addEmails;
+emailManager.addEmails = function(newEmails) {
+    originalAddEmails.call(this, newEmails);
+    saveEmailsToStorage();
 };
 
-// Initialize immediately when script loads
-initialize();
-
-// Save emails when popup closes
-window.addEventListener('beforeunload', () => {
-    chrome.storage.local.set({ extractedEmails: extractedEmails });
-});
+const originalClearEmails = emailManager.clearEmails;
+emailManager.clearEmails = function() {
+    originalClearEmails.call(this);
+    saveEmailsToStorage();
+};
